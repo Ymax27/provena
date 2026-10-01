@@ -43,6 +43,21 @@ F = TypeVar("F", bound=Callable[..., Any])
 _DISABLED = os.environ.get("PROVENA_DISABLED", "").lower() in ("1", "true", "yes")
 
 
+def _text_for_freshness(content: str | bytes) -> str | None:
+    """Return text for temporal freshness scanning.
+
+    Strings are used as-is. UTF-8 bytes are decoded and scanned the same way.
+    Non-UTF-8 bytes return ``None`` so binary payloads still log and skip
+    embedded-date detection only.
+    """
+    if isinstance(content, str):
+        return content
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 class ContextTrail:
     """Tamper-evident audit trail for AI agent context inputs.
 
@@ -360,8 +375,9 @@ class ContextTrail:
         )
 
         prov_result = self._validator.validate(entry)
-        content_str = content if isinstance(content, str) else None
-        fresh_result = self._freshness.check(entry, content=content_str)
+        fresh_result = self._freshness.check(
+            entry, content=_text_for_freshness(content)
+        )
 
         with self._lock:
             prev_hash = self._previous_hash
