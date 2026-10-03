@@ -47,6 +47,8 @@ RAG_DOC_NO_PROVENANCE = (
     "to dampen flapping under spiky load patterns."
 )
 
+_TOOL_EFFECTIVE_AT = datetime.now(timezone.utc) - timedelta(days=5)
+
 TOOL_PRICING_RESPONSE = json.dumps(
     {
         "provider": "aws",
@@ -57,7 +59,7 @@ TOOL_PRICING_RESPONSE = json.dumps(
         "spot_hourly_usd": 0.0612,
         "reserved_1yr_hourly_usd": 0.1027,
         "currency": "USD",
-        "effective_date": "2026-07-01",
+        "effective_date": _TOOL_EFFECTIVE_AT.date().isoformat(),
         "source_api": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEKS/current/us-east-1/index.json",
     }
 )
@@ -103,8 +105,8 @@ def _tool_provenance() -> ProvenanceMetadata:
     return ProvenanceMetadata(
         source_url="https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEKS/current/us-east-1/index.json",
         author="AWS Pricing API",
-        created_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
-        version="2026-07-01",
+        created_at=_TOOL_EFFECTIVE_AT,
+        version=_TOOL_EFFECTIVE_AT.date().isoformat(),
     )
 
 
