@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -255,6 +256,108 @@ class TestSQLiteBackend:
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         conn.close()
         assert mode == "wal"
+
+    def test_concurrent_appends_preserve_all_records(self, sqlite_backend):
+        writer_count = 10
+        records_per_writer = 50
+        start = threading.Barrier(writer_count)
+        errors: list[BaseException] = []
+
+        def write_records(writer_id: int) -> None:
+            try:
+                start.wait(timeout=5)
+                for record_number in range(records_per_writer):
+                    sqlite_backend.append(
+                        _make_record(
+                            content_hash=f"writer-{writer_id}-record-{record_number}",
+                            chain_hash=f"chain-{writer_id}-{record_number}",
+                            previous_hash=f"previous-{writer_id}-{record_number}",
+                        )
+                    )
+            except BaseException as error:
+                errors.append(error)
+
+        writers = [
+            threading.Thread(target=write_records, args=(writer_id,))
+            for writer_id in range(writer_count)
+        ]
+        for writer in writers:
+            writer.start()
+        for writer in writers:
+            writer.join(timeout=10)
+
+        assert all(not writer.is_alive() for writer in writers)
+        assert errors == []
+
+        records = sqlite_backend.all_records()
+        assert len(records) == writer_count * records_per_writer
+        assert [record["id"] for record in records] == list(
+            range(1, writer_count * records_per_writer + 1)
+        )
+        assert len({record["content_hash"] for record in records}) == len(records)
+        assert all(record["chain_hash"].startswith("chain-") for record in records)
+        assert all(
+            record["previous_hash"].startswith("previous-") for record in records
+        )
+
+    def test_concurrent_reads_while_appending(self, sqlite_backend):
+        writer_count = 4
+        records_per_writer = 25
+        reader_count = 4
+        start = threading.Barrier(writer_count + reader_count)
+        writers_done = threading.Event()
+        errors: list[BaseException] = []
+        read_count = 0
+        read_count_lock = threading.Lock()
+
+        def write_records(writer_id: int) -> None:
+            try:
+                start.wait(timeout=5)
+                for record_number in range(records_per_writer):
+                    sqlite_backend.append(
+                        _make_record(
+                            content_hash=f"writer-{writer_id}-record-{record_number}"
+                        )
+                    )
+                    # Keep the writers active long enough for readers to overlap.
+                    threading.Event().wait(0.001)
+            except BaseException as error:
+                errors.append(error)
+
+        def read_records() -> None:
+            nonlocal read_count
+            try:
+                start.wait(timeout=5)
+                while not writers_done.is_set():
+                    records = sqlite_backend.all_records()
+                    assert [record["id"] for record in records] == sorted(
+                        record["id"] for record in records
+                    )
+                    sqlite_backend.count()
+                    sqlite_backend.get_last()
+                    with read_count_lock:
+                        read_count += 1
+            except BaseException as error:
+                errors.append(error)
+
+        writers = [
+            threading.Thread(target=write_records, args=(writer_id,))
+            for writer_id in range(writer_count)
+        ]
+        readers = [threading.Thread(target=read_records) for _ in range(reader_count)]
+        threads = writers + readers
+        for thread in threads:
+            thread.start()
+        for writer in writers:
+            writer.join(timeout=10)
+        writers_done.set()
+        for reader in readers:
+            reader.join(timeout=10)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert errors == []
+        assert read_count > 0
+        assert sqlite_backend.count() == writer_count * records_per_writer
 
     def test_add_annotation(self, sqlite_backend):
         sqlite_backend.append(_make_record())
