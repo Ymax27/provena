@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Concurrent write tests for `ContextTrail` and `WriteBuffer`.** Several threads log into one in-memory trail, with and without buffering, then the suite checks that every record landed and `verify_chain()` still reports an intact chain (#55)
+
 ### Changed
 
 - **CONTRIBUTING.md matches the current tree and dev setup.** The project map includes modules added since v0.7, the editable install lists the `yaml` extra, and PostgreSQL tests document `PROVENA_TEST_PG_URL` (#58)
@@ -13,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **`verify_chain()` now checks each record's stored `previous_hash` column**, not just its `chain_hash`. It previously recomputed `chain_hash` using its own internally tracked previous hash, never comparing that against the value actually stored in the row — so mutating only a record's `previous_hash` column (leaving `chain_hash` and every hashed field untouched) went undetected. Also tightened `docs/guide/verification.md`, which claimed any record modification breaks the chain; it now states plainly that only the hashed fields (`previous_hash`, `content_hash`, `source`, `timestamp`) are covered, and governance columns like `provenance_status` and `metadata_json` can be modified without breaking verification (#195)
-
+- **UTF-8 `bytes` payloads are scanned for temporal freshness.** `_log_internal` decodes bytes as UTF-8 before `FreshnessChecker.check`. A decode failure skips embedded-date detection and still logs the record. Metadata timestamps stay authoritative (#196)
 - **`last_record` and `health()["record_count"]` now include unflushed buffered rows**, matching the "backend + pending" contract `query()`, `summary()`, and the `record_count` property already follow. Previously, `last_record` only ever read the backend, so it could return `None` or a stale older row while the newest logged record sat unflushed in the buffer — breaking `annotate()`'s own documented guidance to read the record's real id from `last_record` after a `flush()`. `health()["record_count"]` only read the backend too, silently under-reporting during active buffered ingestion even though `health()` already separately exposes `buffer_pending`. An unflushed row returned via `last_record` carries `id=-1`, same as `query()` (#194)
 - **`ProvenaCrewListener` now actually receives CrewAI events.** It imported from a module path CrewAI no longer has, never implemented `setup_listeners()` (the method CrewAI's `BaseEventListener` requires to register handlers on its event bus), and read a nonexistent `event.agent_name` attribute. A real `crew.kickoff()` run produced zero trail records with no error. Now imports from `crewai.events`, registers `ToolUsageFinishedEvent`/`AgentExecutionCompletedEvent` handlers via `setup_listeners()`, and reads the agent's name via `event.agent.role`. The `crewai` extra's minimum version is bumped to `>=1.0.0` — confirmed by direct install/inspection that no version between `0.80.0` and `0.98.0` has the class-based event API this adapter (in either its old or fixed form) depends on at all (#193)
 - **`WriteBuffer`'s last-resort `weakref.finalize` flush no longer silently drops records on backend failure.** Unlike the normal flush path (`_flush_locked`, fixed by #41), `_weak_flush` caught a failed `backend.append()` with no log line at all, so a garbage-collection-triggered flush could lose pending records without any signal — especially risky since the trail's hash-chain tip has already advanced past them by then. Both paths now share a `_drain_buffer()` helper that logs a warning and keeps the record in the buffer on failure (#197)

@@ -166,6 +166,51 @@ class TestContextTrailVerify:
             os.unlink(db_path)
 
 
+class TestBytesFreshness:
+    def test_utf8_bytes_match_str_temporal_status(self):
+        text = "As of 2020, the old data still applies."
+        trail = ContextTrail(backend="memory")
+        try:
+            as_text = trail.log(text, source="retriever")
+            as_bytes = trail.log(text.encode("utf-8"), source="tool:file")
+            assert as_text is not None and as_bytes is not None
+            assert as_text.freshness_result is not None
+            assert as_bytes.freshness_result is not None
+            assert as_text.freshness_result.status == "STALE"
+            assert as_bytes.freshness_result.status == as_text.freshness_result.status
+            assert as_bytes.freshness_result.detected_date is not None
+            assert as_bytes.freshness_result.detected_date.year == 2020
+        finally:
+            trail.close()
+
+    def test_non_utf8_bytes_log_and_skip_temporal(self):
+        trail = ContextTrail(backend="memory")
+        try:
+            record = trail.log(b"\xff\xfe\x00", source="tool:binary")
+            assert record is not None
+            assert record.entry.content_type == "bytes"
+            assert record.freshness_result is not None
+            assert record.freshness_result.status == "UNKNOWN"
+            assert trail.verify_chain().intact
+        finally:
+            trail.close()
+
+    def test_metadata_timestamp_wins_for_utf8_bytes(self):
+        text = "As of 2020, the old data still applies."
+        trail = ContextTrail(backend="memory")
+        try:
+            record = trail.log(
+                text.encode("utf-8"),
+                source="retriever",
+                provenance=ProvenanceMetadata(created_at=datetime.now(timezone.utc)),
+            )
+            assert record is not None
+            assert record.freshness_result is not None
+            assert record.freshness_result.status == "FRESH"
+        finally:
+            trail.close()
+
+
 class TestContextTrailTrack:
     def test_track_sync_function(self, memory_trail):
         @memory_trail.track(source="retriever", source_name="search")
