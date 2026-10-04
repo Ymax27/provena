@@ -391,6 +391,59 @@ class TestSQLiteBackend:
             operation(sqlite_backend)
 
 
+class TestAddAnnotationValidation:
+    @pytest.mark.parametrize("backend_name", ["memory_backend", "sqlite_backend"])
+    def test_add_annotation_nonexistent_record_raises_error(
+        self, request, backend_name
+    ):
+        """Both backends should raise ValueError for nonexistent record_id.
+
+        This tests consistency across InMemoryBackend and SQLiteBackend.
+        Addresses issue #84: SQLiteBackend was not validating record_id.
+        """
+        backend = request.getfixturevalue(backend_name)
+        # Try to add annotation to nonexistent record (no records appended)
+        with pytest.raises(ValueError, match="Record 999 does not exist"):
+            backend.add_annotation(
+                record_id=999,
+                note="orphan",
+                reviewer="alice",
+                timestamp="2026-07-13T00:00:00",
+            )
+
+    @pytest.mark.parametrize("backend_name", ["memory_backend", "sqlite_backend"])
+    def test_add_annotation_to_deleted_record_raises_error(self, request, backend_name):
+        """Annotation to non-existent record should fail consistently."""
+        backend = request.getfixturevalue(backend_name)
+        # Append one record and then try to annotate a different one
+        backend.append(_make_record())
+        with pytest.raises(ValueError, match="Record 2 does not exist"):
+            backend.add_annotation(
+                record_id=2,
+                note="orphan",
+                reviewer="bob",
+                timestamp="2026-07-13T00:00:00",
+            )
+
+    @pytest.mark.parametrize("backend_name", ["memory_backend", "sqlite_backend"])
+    def test_add_annotation_valid_record_succeeds(self, request, backend_name):
+        """Adding annotation to existing record should succeed."""
+        backend = request.getfixturevalue(backend_name)
+        backend.append(_make_record())
+        # Should not raise error
+        ann_id = backend.add_annotation(
+            record_id=1,
+            note="valid annotation",
+            reviewer="alice",
+            timestamp="2026-07-13T00:00:00",
+        )
+        assert ann_id >= 1
+        # Verify annotation was actually added
+        anns = backend.get_annotations(1)
+        assert len(anns) == 1
+        assert anns[0]["note"] == "valid annotation"
+
+
 class TestGetAnnotations:
     @pytest.mark.parametrize("backend_name", ["memory_backend", "sqlite_backend"])
     def test_empty_for_unannotated_record(self, request, backend_name):

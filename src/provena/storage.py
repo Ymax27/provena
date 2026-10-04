@@ -255,9 +255,20 @@ class SQLiteBackend:
     def add_annotation(
         self, record_id: int, note: str, reviewer: str, timestamp: str
     ) -> int:
-        """Add an annotation to a record and return the annotation ID."""
+        """Add an annotation to a record and return the annotation ID.
+
+        Raises:
+            ValueError: If the record_id does not exist.
+        """
         with self._lock:
             conn = self._check_open()
+            # Validate that the record exists before adding annotation
+            record = conn.execute(
+                "SELECT id FROM trail WHERE id = ?", (record_id,)
+            ).fetchone()
+            if record is None:
+                raise ValueError(f"Record {record_id} does not exist")
+
             cursor = conn.execute(
                 "INSERT INTO annotations (record_id, note, reviewer, timestamp) "
                 "VALUES (?, ?, ?, ?)",
