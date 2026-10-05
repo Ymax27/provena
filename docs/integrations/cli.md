@@ -384,9 +384,12 @@ Empty provenance or freshness maps print `none`.
 
 ## `provena retain`
 
-Delete records older than `--max-age` days. The minimum is 180. `--dry-run`
-only reports what would be removed. `--archive` writes those rows to JSON
-before deletion.
+Tombstone records older than `--max-age` days. The minimum is 180. The row
+stays in the chain: provenance is cleared, `source_name` becomes `retained`,
+and its annotations are removed, so `verify` still passes. The command text
+says "deleted" for that update. `--dry-run` only reports the count.
+`--archive` writes those rows to JSON before the tombstone. A purge record
+is appended afterward.
 
 ```bash
 provena --db audit.db retain --max-age 365 --dry-run
