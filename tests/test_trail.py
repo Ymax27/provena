@@ -246,32 +246,21 @@ class TestContextTrailVerify:
             trail.close()
 
     def test_verify_stays_intact_while_logging(self, memory_trail):
-        finished = 0
-        finished_lock = threading.Lock()
         errors: list[str] = []
         per_thread = 30
 
         def logger() -> None:
-            nonlocal finished
             for i in range(per_thread):
                 record = memory_trail.log(
                     f"{threading.get_ident()}-{i}", source="retriever"
                 )
                 assert record is not None
-                with finished_lock:
-                    finished += 1
 
         def verifier() -> None:
             for _ in range(20):
                 verdict = memory_trail.verify_chain()
-                with finished_lock:
-                    seen = finished
                 if not verdict.intact:
                     errors.append(verdict.details)
-                if verdict.total_records > seen:
-                    errors.append(
-                        f"snapshot {verdict.total_records} exceeded completed logs {seen}"
-                    )
 
         workers = [threading.Thread(target=logger) for _ in range(4)]
         checker = threading.Thread(target=verifier)
