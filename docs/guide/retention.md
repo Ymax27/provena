@@ -1,7 +1,9 @@
 # Retention
 
-`RetentionEngine` deletes trail records older than a retention window and
-can archive them first. The default floor is 180 days, the EU AI Act
+`RetentionEngine` tombstones trail records older than a retention window and
+can archive them first. The row stays in the hash chain: provenance is
+cleared, `source_name` becomes `retained`, and its annotations are removed.
+`verify_chain()` still passes. The default floor is 180 days, the EU AI Act
 minimum for the logs this engine is meant to keep. A shorter
 `retention_days` raises `ValueError`.
 
@@ -21,10 +23,11 @@ result = engine.execute(archive_path="archive.json", dry_run=True)
 result = engine.execute(archive_path="archive.json")
 ```
 
-`execute` writes the expired rows (and their annotations) to `archive_path`
-before deleting them. It then logs a `provena:retention` record describing
-the purge, so the deletion itself stays on the trail. `dry_run=True` reports
-what would be removed and does not write or delete anything.
+`would_delete` and `result.deleted` count rows that would be, or were,
+tombstoned. `execute` writes those rows and their annotations to
+`archive_path` before the update. After the tombstone, it appends a
+`provena:retention` record describing the purge. `dry_run=True` reports the
+count and does not archive or update anything.
 
 `preview()` counts expired records and breaks them down by provenance and
 freshness status without changing storage.
@@ -39,4 +42,5 @@ provena --db audit.db retain --max-age 365 --archive backup.json
 ```
 
 `--max-age` is `retention_days`. Values below 180 are rejected. `--archive`
-is the JSON file passed to `execute(archive_path=...)`.
+is the JSON file passed to `execute(archive_path=...)`. The command's own
+text says "deleted"; the stored rows are tombstoned, as above.

@@ -78,9 +78,11 @@ provena --db audit.db retain --max-age 365 --dry-run
 provena --db audit.db retain --max-age 365 --archive backup.json
 ```
 
-`--dry-run` only counts what would be deleted. `--archive` writes those rows
-to JSON before deletion. The purge itself is appended to the trail. Details
-are in [Retention](../guide/retention.md).
+`--dry-run` only counts rows that would be tombstoned. The row stays in the
+hash chain: provenance is cleared, `source_name` becomes `retained`, and its
+annotations are removed, so `provena verify` still passes. `--archive` writes
+those rows to JSON before that update. A purge record is appended after the
+tombstone. Details are in [Retention](../guide/retention.md).
 
 ## Article map
 
