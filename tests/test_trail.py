@@ -129,6 +129,21 @@ class TestContextTrailVerify:
         assert verdict.total_records == 3
         assert "chain_hash" in verdict.details
 
+    def test_verify_detects_previous_hash_tamper(self, memory_trail):
+        # Regression for #195: mutating only the stored previous_hash column
+        # (leaving chain_hash and every hashed field untouched) must break
+        # the chain. verify_chain() only recomputed chain_hash from its own
+        # tracked previous_hash, never checking the stored column against it.
+        for i in range(3):
+            memory_trail.log(f"entry_{i}", source="retriever")
+        memory_trail._backend._records[1]["previous_hash"] = "TAMPERED"
+
+        verdict = memory_trail.verify_chain()
+        assert not verdict.intact
+        assert verdict.broken_at == 2
+        assert verdict.total_records == 3
+        assert "Chain broken at record 2" in verdict.details
+
     def test_verify_signed_chain_rejects_wrong_key(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
@@ -149,6 +164,51 @@ class TestContextTrailVerify:
             trail_b.close()
         finally:
             os.unlink(db_path)
+
+
+class TestBytesFreshness:
+    def test_utf8_bytes_match_str_temporal_status(self):
+        text = "As of 2020, the old data still applies."
+        trail = ContextTrail(backend="memory")
+        try:
+            as_text = trail.log(text, source="retriever")
+            as_bytes = trail.log(text.encode("utf-8"), source="tool:file")
+            assert as_text is not None and as_bytes is not None
+            assert as_text.freshness_result is not None
+            assert as_bytes.freshness_result is not None
+            assert as_text.freshness_result.status == "STALE"
+            assert as_bytes.freshness_result.status == as_text.freshness_result.status
+            assert as_bytes.freshness_result.detected_date is not None
+            assert as_bytes.freshness_result.detected_date.year == 2020
+        finally:
+            trail.close()
+
+    def test_non_utf8_bytes_log_and_skip_temporal(self):
+        trail = ContextTrail(backend="memory")
+        try:
+            record = trail.log(b"\xff\xfe\x00", source="tool:binary")
+            assert record is not None
+            assert record.entry.content_type == "bytes"
+            assert record.freshness_result is not None
+            assert record.freshness_result.status == "UNKNOWN"
+            assert trail.verify_chain().intact
+        finally:
+            trail.close()
+
+    def test_metadata_timestamp_wins_for_utf8_bytes(self):
+        text = "As of 2020, the old data still applies."
+        trail = ContextTrail(backend="memory")
+        try:
+            record = trail.log(
+                text.encode("utf-8"),
+                source="retriever",
+                provenance=ProvenanceMetadata(created_at=datetime.now(timezone.utc)),
+            )
+            assert record is not None
+            assert record.freshness_result is not None
+            assert record.freshness_result.status == "FRESH"
+        finally:
+            trail.close()
 
 
 class TestContextTrailTrack:
