@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+import provena.buffer as buffer_module
 from provena import ContextTrail
 from provena.buffer import WriteBuffer
 from provena.models import ContextSource
@@ -132,6 +133,37 @@ class TestWriteBuffer:
         assert buf.pending == 0
         assert backend.count() == 1
 
+    def test_weak_flush_logs_and_keeps_record_on_failure(self, caplog):
+        from collections import deque
+
+        from provena.buffer import _weak_flush
+
+        backend = InMemoryBackend()
+
+        def failing_append(record):
+            raise OSError("simulated backend outage")
+
+        backend.append = failing_append  # type: ignore[method-assign]
+
+        buffer: deque = deque()
+        buffer.append(
+            {
+                "content_hash": "a",
+                "source": "r",
+                "source_name": "t",
+                "timestamp": "2026-07-20T00:00:00Z",
+                "chain_hash": "c",
+                "previous_hash": "p",
+            }
+        )
+        lock = threading.RLock()
+
+        with caplog.at_level("WARNING", logger="provena.buffer"):
+            _weak_flush(buffer, lock, backend)
+
+        assert len(buffer) == 1
+        assert "Failed to flush record" in caplog.text
+
     def test_full_snapshot_includes_backend_and_pending(self):
         backend = InMemoryBackend()
         buf = WriteBuffer(backend, buffer_size=100, flush_interval=60)
@@ -202,6 +234,12 @@ class TestWriteBuffer:
 
     def test_sigterm_flushes_every_active_buffer(self):
         previous_handler = signal.getsignal(signal.SIGTERM)
+        previous_calls = []
+
+        def application_handler(signum, frame):
+            previous_calls.append((signum, frame))
+
+        signal.signal(signal.SIGTERM, application_handler)
         first_backend = InMemoryBackend()
         second_backend = InMemoryBackend()
         first = WriteBuffer(first_backend, buffer_size=100, flush_interval=60)
@@ -215,10 +253,33 @@ class TestWriteBuffer:
             handler(signal.SIGTERM, None)
             assert first_backend.count() == 1
             assert second_backend.count() == 1
+            assert previous_calls == [(signal.SIGTERM, None)]
         finally:
             first.close()
             second.close()
             signal.signal(signal.SIGTERM, previous_handler)
+
+    def test_sigterm_restores_and_raises_default_handler(self, monkeypatch):
+        actions = []
+        monkeypatch.setattr(buffer_module, "_active_buffers", set())
+        monkeypatch.setattr(buffer_module, "_prev_sigterm_handler", signal.SIG_DFL)
+        monkeypatch.setattr(
+            buffer_module.signal,
+            "signal",
+            lambda signum, handler: actions.append(("restore", signum, handler)),
+        )
+        monkeypatch.setattr(
+            buffer_module.signal,
+            "raise_signal",
+            lambda signum: actions.append(("raise", signum)),
+        )
+
+        buffer_module._sigterm_handler(signal.SIGTERM, None)
+
+        assert actions == [
+            ("restore", signal.SIGTERM, signal.SIG_DFL),
+            ("raise", signal.SIGTERM),
+        ]
 
 
 class TestContextTrailBuffered:
