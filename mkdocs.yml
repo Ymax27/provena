@@ -73,6 +73,7 @@ nav:
     - Freshness Checking: guide/freshness.md
     - Chain Verification: guide/verification.md
     - Policy Engine: guide/policies.md
+    - Multi-Agent Aggregation: guide/multi-agent.md
     - Retention Policy: guide/retention.md
     - Compliance Reports: guide/reports.md
     - Configuration: guide/configuration.md
